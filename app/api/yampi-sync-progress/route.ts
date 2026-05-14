@@ -154,10 +154,9 @@ export async function POST(req: NextRequest) {
 
           if (!res.ok) {
             if (res.status === 429) {
-              // Rate limit — espera 3 segundos e tenta de novo
-              send(ctrl, { type: 'progress', page, synced, skipped, errors, totalProcessed, message: `Rate limit na página ${page}, aguardando...` })
+              send(ctrl, { type: 'progress', page, synced, skipped, errors, totalProcessed, message: `Rate limit na página ${page}, aguardando 3s...` })
               await new Promise(r => setTimeout(r, 3000))
-              page-- // repete a página
+              page--
               continue
             }
             send(ctrl, { type: 'error', message: `Erro HTTP ${res.status} na página ${page}` })
@@ -174,7 +173,6 @@ export async function POST(req: NextRequest) {
             else if (result.skipped) skipped++
             else errors++
 
-            // Envia progresso a cada 10 pedidos
             if (totalProcessed % 10 === 0) {
               send(ctrl, { type: 'progress', page, synced, skipped, errors, totalProcessed, message: `Página ${page} — ${totalProcessed} processados` })
             }
@@ -182,8 +180,9 @@ export async function POST(req: NextRequest) {
 
           if (orders.length < 50) break
 
-          // Delay entre páginas para evitar rate limit (429)
+          // Delay entre páginas para evitar rate limit
           await new Promise(r => setTimeout(r, 600))
+        } catch (e: any) {
           send(ctrl, { type: 'error', message: `Erro na página ${page}: ${e.message}` })
           break
         }
