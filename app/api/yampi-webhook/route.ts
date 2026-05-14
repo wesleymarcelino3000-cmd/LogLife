@@ -64,11 +64,13 @@ export async function POST(req: NextRequest) {
     const body = await req.json()
 
     // Log do evento recebido
-    const event   = body.event || body.type || 'unknown'
-    const order   = body.data || body.order || body.resource || {}
-    const orderId = String(order.id || order.order_id || '')
+    const event   = body.event || body.type || body.action || 'unknown'
 
-    console.log(`[Yampi Webhook] Event: ${event}, Order: ${orderId}`)
+    // A Yampi pode enviar o pedido em vários formatos
+    const order   = body.data?.order || body.data?.resource || body.data || body.order || body.resource || body || {}
+    const orderId = String(order.id || order.order_id || order.number || body.id || '')
+
+    console.log(`[Yampi Webhook] Event: ${event}, Order: ${orderId}, Keys: ${Object.keys(body).join(',')}`, JSON.stringify(body).slice(0, 500))
 
     // Salva log no banco
     await (supabaseAdmin as any)
@@ -86,13 +88,15 @@ export async function POST(req: NextRequest) {
     }
 
     // Extrai dados do pedido
-    const shipping  = order.shipping_address || order.address || {}
-    const customer  = order.customer?.data || order.customer || {}
-    const cepRaw    = (shipping.zipcode || shipping.zip_code || shipping.cep || '').replace(/\D/g, '')
+    const shipping  = order.shipping_address?.data || order.shipping_address || order.address?.data || order.address || {}
+    const customer  = order.customer?.data || order.customer || order.buyer?.data || order.buyer || {}
+    const cepRaw    = (shipping.zipcode || shipping.zip_code || shipping.cep || customer.zipcode || '').replace(/\D/g, '')
     const cep       = cepRaw.length === 8 ? `${cepRaw.slice(0,5)}-${cepRaw.slice(5)}` : ''
     const isExpress = EXPRESS_CEPS.includes(cep)
-    const yampiStatus = order.status?.alias || order.status || ''
+    const yampiStatus = order.status?.alias || order.status?.key || order.status || body.status?.alias || ''
     const internalStatus = STATUS_MAP[yampiStatus] || 'pending'
+
+    console.log(`[Yampi Webhook] CEP: ${cep}, Status: ${yampiStatus}, Customer: ${customer.first_name||''}`)
 
     // Extrai nome do produto
     const items = order.items?.data || order.items || []
@@ -149,6 +153,7 @@ export async function POST(req: NextRequest) {
         weight_kg:       0.5,
         is_express:      isExpress,
         product_name:    productName,
+        ordered_at:      order.created_at || order.date || order.ordered_at || null,
       })
       .select()
       .single()
