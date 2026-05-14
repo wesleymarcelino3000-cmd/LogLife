@@ -1131,7 +1131,10 @@ function LabelsPage({syncing, syncResult, runYampiSync, navCreate, syncToast, te
               {s.status==='pending'?'✓ Pronto':s.status==='in_transit'?'Em trânsito':s.status==='delivered'?'Entregue':'Pendente'}
             </span>
             {s.is_express && <span style={{fontSize:9,fontWeight:700,color:'var(--express)',background:'rgba(255,77,0,.12)',borderRadius:4,padding:'2px 6px',width:'fit-content'}}>⚡ EXPRESS</span>}
-            <span style={{fontSize:10,color:'var(--text3)'}}>Sem NF-e</span>
+            {s.nfe_chave
+              ? <span style={{fontSize:10,fontWeight:600,color:'var(--green)',background:'rgba(34,197,94,.12)',borderRadius:4,padding:'2px 6px',width:'fit-content'}}>📄 Com NF-e</span>
+              : <span style={{fontSize:10,color:'var(--text3)',background:'rgba(255,255,255,.05)',borderRadius:4,padding:'2px 6px',width:'fit-content'}}>Sem NF-e</span>
+            }
           </div>
 
           {/* Pedido */}
