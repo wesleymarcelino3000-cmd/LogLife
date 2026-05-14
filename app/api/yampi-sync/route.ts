@@ -10,11 +10,20 @@ const YAMPI_API_BASE = 'https://api.dooki.com.br/v2'
 
 // Apenas esses status são importados
 const ELIGIBLE_STATUS_ALIASES = [
+  // Status confirmados na Yampi
   'authorized',
+  'paid',
+  'invoiced',
+  'handling_products',
+  'ready_for_shipping',
+  'ready_for_pickup',
+  'created',
+  // Variantes alternativas
   'payment_approved',
   'separating',
-  'invoiced',
   'ready_to_ship',
+  'payment_confirmed',
+  'processing',
 ]
 
 const STATUS_LABELS: Record<string, string> = {

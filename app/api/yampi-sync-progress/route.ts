@@ -9,7 +9,22 @@ const YAMPI_API_BASE = 'https://api.dooki.com.br/v2'
 const EXPRESS_CEPS   = ['35585-000', '37925-000']
 const MAX_PAGES      = 200
 
-const ELIGIBLE = ['authorized','payment_approved','separating','invoiced','ready_to_ship','paid','handling_products','ready_for_shipping','created']
+const ELIGIBLE = [
+  // Status confirmados na Yampi
+  'authorized',
+  'paid',
+  'invoiced',
+  'handling_products',
+  'ready_for_shipping',
+  'ready_for_pickup',
+  'created',
+  // Variantes alternativas
+  'payment_approved',
+  'separating',
+  'ready_to_ship',
+  'payment_confirmed',
+  'processing',
+]
 
 function send(ctrl: ReadableStreamDefaultController, data: object) {
   ctrl.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`))
