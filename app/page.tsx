@@ -940,21 +940,26 @@ function LabelsPage({syncing, syncResult, runYampiSync, navCreate, syncToast, te
   const [statusFilter, setStatusFilter] = useState('all')
   const [generating, setGenerating] = useState<string|null>(null)
   const [toast, setToast]         = useState('')
+  const [page, setPage]           = useState(1)
+  const [total, setTotal]         = useState(0)
+  const PER_PAGE = 100
 
   function showToast(msg:string){setToast(msg);setTimeout(()=>setToast(''),4000)}
 
   useEffect(()=>{
     if(typeof window==='undefined') return
-    loadShipments()
+    loadShipments(page)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[])
+  },[page])
 
-  async function loadShipments(){
+  async function loadShipments(p = page){
     setLoading(true)
     try{
-      const r = await fetch('/api/shipments?limit=100')
+      const offset = (p - 1) * PER_PAGE
+      const r = await fetch(`/api/shipments?limit=${PER_PAGE}&offset=${offset}`)
       const j = await r.json()
       if(j.data) setShipments(j.data)
+      if(j.total !== undefined) setTotal(j.total)
     }catch(e){console.error(e)}
     setLoading(false)
   }
@@ -978,6 +983,7 @@ function LabelsPage({syncing, syncResult, runYampiSync, navCreate, syncToast, te
   const filtered = statusFilter==='all' ? shipments : shipments.filter(s=>s.status===statusFilter)
   const pending  = shipments.filter(s=>s.status==='pending').length
   const express  = shipments.filter(s=>s.is_express).length
+  const totalPages = Math.ceil(total / PER_PAGE)
 
   const carrierName: Record<string,string> = {jt:'J&T Express', loggi:'Loggi', yampi:'Yampi'}
   const carrierColor: Record<string,string> = {jt:'#e63946', loggi:'#f59e0b', yampi:'#6366f1'}
@@ -1072,10 +1078,6 @@ function LabelsPage({syncing, syncResult, runYampiSync, navCreate, syncToast, te
           {/* Pedido */}
           <div>
             <div style={{fontSize:13,fontWeight:700,color:'var(--text)',fontFamily:'monospace'}}>#{s.order_id}</div>
-            <div style={{fontSize:11,color:'var(--text3)',marginTop:2,display:'flex',alignItems:'center',gap:4}}>
-              <div style={{width:8,height:8,borderRadius:2,background:carrierColor[s.carrier]||'var(--accent)',flexShrink:0}}></div>
-              {carrierName[s.carrier]||s.carrier}
-            </div>
           </div>
 
           {/* Cliente */}
@@ -1085,10 +1087,13 @@ function LabelsPage({syncing, syncResult, runYampiSync, navCreate, syncToast, te
             {s.is_express && <div style={{fontSize:10,fontFamily:'monospace',color:'var(--express)'}}>{s.recipient_cep}</div>}
           </div>
 
-          {/* Produto / Valor */}
+          {/* Produto */}
           <div>
-            <div style={{fontSize:12,color:'var(--text2)'}}>Valor: <strong style={{color:'var(--green)'}}>R${(s.value_brl||0).toFixed(2)}</strong></div>
-            <div style={{fontSize:11,color:'var(--text3)'}}>Peso: {s.weight_kg||'—'}kg</div>
+            <div style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>{s.product_name || s.items?.[0]?.name || '—'}</div>
+            {s.product_name || s.items?.[0]?.name
+              ? <div style={{fontSize:11,color:'var(--text3)'}}>{s.items?.[0]?.quantity ? `Qtd: ${s.items[0].quantity}` : ''}</div>
+              : <div style={{fontSize:11,color:'var(--text3)'}}>Produto não informado</div>
+            }
           </div>
 
           {/* Data */}
@@ -1113,6 +1118,23 @@ function LabelsPage({syncing, syncResult, runYampiSync, navCreate, syncToast, te
     </div>
 
     <style>{`.shiprow:hover{background:var(--surface2)!important;}`}</style>
+
+    {/* PAGINAÇÃO */}
+    {totalPages > 1 && (
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginTop:14,padding:'12px 16px',background:'var(--surface)',border:'1px solid var(--border)',borderRadius:12}}>
+        <div style={{fontSize:12,color:'var(--text3)'}}>
+          Mostrando {((page-1)*PER_PAGE)+1}–{Math.min(page*PER_PAGE, total)} de <strong style={{color:'var(--text)'}}>{total}</strong> pedidos
+        </div>
+        <div style={{display:'flex',gap:6,alignItems:'center'}}>
+          <button className="btn btn-ghost" style={{fontSize:12,padding:'6px 12px'}} onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page===1}>← Anterior</button>
+          {Array.from({length:totalPages},(_, i)=>i+1).filter(p=>p===1||p===totalPages||Math.abs(p-page)<=1).map((p,i,arr)=>(<>
+            {i>0&&arr[i-1]!==p-1&&<span key={`dots-${p}`} style={{color:'var(--text3)',fontSize:12}}>...</span>}
+            <button key={p} className={`btn ${p===page?'btn-primary':'btn-ghost'}`} style={{fontSize:12,padding:'6px 10px',minWidth:34}} onClick={()=>setPage(p)}>{p}</button>
+          </>))}
+          <button className="btn btn-ghost" style={{fontSize:12,padding:'6px 12px'}} onClick={()=>setPage(p=>Math.min(totalPages,p+1))} disabled={page===totalPages}>Próxima →</button>
+        </div>
+      </div>
+    )}
   </>
 }
 
