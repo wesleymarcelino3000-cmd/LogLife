@@ -59,19 +59,18 @@ function getStatusAlias(order: any): string {
 function extractProduct(data: any): string | null {
   const items = data?.items?.data || data?.items || []
   if (!items.length) return null
-  return items.map((item: any) => {
+  const names = items.map((item: any) => {
     const qty  = item.quantity || item.qty || 1
-    const name = typeof item.name === 'string' && item.name
-      ? item.name
-      : typeof item.title === 'string' && item.title
-      ? item.title
-      : typeof item.product === 'string'
-      ? item.product
-      : item.product?.data?.title || item.product?.title
-      || item.product?.data?.name  || item.product?.name
-      || item.sku || ''
+    const name =
+      item.product?.data?.title || item.product?.title ||
+      item.product?.data?.name  || item.product?.name  ||
+      (typeof item.product === 'string' ? item.product : '') ||
+      (typeof item.name    === 'string' ? item.name    : '') ||
+      (typeof item.title   === 'string' ? item.title   : '') ||
+      item.sku || ''
     return name ? `${qty}x ${name}` : ''
-  }).filter(Boolean).join('\n') || null
+  }).filter(Boolean)
+  return names.length ? names.join('\n') : null
 }
 
 async function importOrder(order: any): Promise<{ imported: boolean; skipped: boolean; error?: string }> {
@@ -147,15 +146,9 @@ export async function POST(req: NextRequest) {
         try {
           send(ctrl, { type: 'progress', page, synced, skipped, errors, message: `Buscando página ${page}...` })
 
-          const statusParams = [
-            'authorized','paid','invoiced','handling_products',
-            'ready_for_shipping','ready_for_pickup','created',
-            'payment_approved','separating','ready_to_ship',
-          ].map(s => `q[status_alias_in][]=${s}`).join('&')
-
           const { res, json } = await yampiGet(
             resolvedAlias,
-            `orders?limit=50&page=${page}&include=invoices,items.product&${statusParams}`,
+            `orders?limit=50&page=${page}&include=invoices,items,customer,shipping_address&sort=-id`,
             yampi_token,
             secret || ''
           )
