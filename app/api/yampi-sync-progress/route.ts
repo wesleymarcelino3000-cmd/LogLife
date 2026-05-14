@@ -61,7 +61,15 @@ function extractProduct(data: any): string | null {
   if (!items.length) return null
   return items.map((item: any) => {
     const qty  = item.quantity || item.qty || 1
-    const name = item.product?.data?.title || item.product?.title || item.name || item.title || item.sku || ''
+    const name = typeof item.name === 'string' && item.name
+      ? item.name
+      : typeof item.title === 'string' && item.title
+      ? item.title
+      : typeof item.product === 'string'
+      ? item.product
+      : item.product?.data?.title || item.product?.title
+      || item.product?.data?.name  || item.product?.name
+      || item.sku || ''
     return name ? `${qty}x ${name}` : ''
   }).filter(Boolean).join('\n') || null
 }
