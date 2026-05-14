@@ -147,9 +147,15 @@ export async function POST(req: NextRequest) {
         try {
           send(ctrl, { type: 'progress', page, synced, skipped, errors, message: `Buscando página ${page}...` })
 
+          const statusParams = [
+            'authorized','paid','invoiced','handling_products',
+            'ready_for_shipping','ready_for_pickup','created',
+            'payment_approved','separating','ready_to_ship',
+          ].map(s => `q[status_alias_in][]=${s}`).join('&')
+
           const { res, json } = await yampiGet(
             resolvedAlias,
-            `orders?limit=50&page=${page}&include=invoices,items.product`,
+            `orders?limit=50&page=${page}&include=invoices,items.product&${statusParams}`,
             yampi_token,
             secret || ''
           )
