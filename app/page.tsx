@@ -157,50 +157,60 @@ export default function Home() {
     setSyncResult(null)
     setSyncProgress(null)
     try {
-      const apisRes = await fetch('/api/integrations')
+      const apisRes  = await fetch('/api/integrations')
       const apisData = await apisRes.json()
-      const yampi = (apisData.data || []).find((a: {name:string}) => a.name.toLowerCase().includes('yampi'))
-      if (!yampi || !yampi.api_key) {
-        setSyncToast('❌ Configure o token da Yampi em API → Minhas APIs primeiro')
+      const yampiApis = (apisData.data || []).filter((a: any) =>
+        a.name.toLowerCase().includes('yampi') && a.active && a.api_key
+      )
+
+      if (!yampiApis.length) {
+        setSyncToast('❌ Configure ao menos uma integração Yampi primeiro')
         setSyncing(false)
         setTimeout(() => setSyncToast(''), 4000)
         return
       }
 
-      const r = await fetch('/api/yampi-sync-progress', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ yampi_token: yampi.api_key, secret: yampi.secret || '', alias: yampi.url, url: yampi.url }),
-      })
+      let totalSynced = 0, totalSkipped = 0, totalErrors = 0
 
-      const reader = r.body?.getReader()
-      const decoder = new TextDecoder()
+      for (const yampi of yampiApis) {
+        setSyncProgress({ page: 1, synced: 0, skipped: 0, errors: 0, totalProcessed: 0, message: `Iniciando: ${yampi.name}...` })
 
-      if (!reader) throw new Error('Sem stream')
+        const r = await fetch('/api/yampi-sync-progress', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ yampi_token: yampi.api_key, secret: yampi.secret || '', alias: yampi.url, url: yampi.url }),
+        })
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
+        const reader  = r.body?.getReader()
+        const decoder = new TextDecoder()
+        if (!reader) continue
 
-        const text = decoder.decode(value)
-        const lines = text.split('\n').filter(l => l.startsWith('data: '))
-
-        for (const line of lines) {
-          try {
-            const data = JSON.parse(line.slice(6))
-            if (data.type === 'progress') {
-              setSyncProgress({ page: data.page, synced: data.synced, skipped: data.skipped, errors: data.errors, totalProcessed: data.totalProcessed || 0, message: data.message })
-            } else if (data.type === 'done') {
-              setSyncResult({ synced: data.synced, skipped: data.skipped, errors: data.errors })
-              setSyncProgress(null)
-              setSyncToast(`✅ Sincronizado! ${data.synced} novos pedidos importados`)
-              loadShipments()
-            } else if (data.type === 'error') {
-              setSyncToast(`❌ ${data.message}`)
-            }
-          } catch {}
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          const text  = decoder.decode(value)
+          const lines = text.split('\n').filter(l => l.startsWith('data: '))
+          for (const line of lines) {
+            try {
+              const data = JSON.parse(line.slice(6))
+              if (data.type === 'progress') {
+                setSyncProgress({ page: data.page, synced: data.synced, skipped: data.skipped, errors: data.errors, totalProcessed: data.totalProcessed || 0, message: `[${yampi.name}] ${data.message}` })
+              } else if (data.type === 'done') {
+                totalSynced  += data.synced
+                totalSkipped += data.skipped
+                totalErrors  += data.errors
+              } else if (data.type === 'error') {
+                setSyncToast(`❌ [${yampi.name}] ${data.message}`)
+              }
+            } catch {}
+          }
         }
       }
+
+      setSyncResult({ synced: totalSynced, skipped: totalSkipped, errors: totalErrors })
+      setSyncProgress(null)
+      setSyncToast(`✅ Sincronizado! ${totalSynced} novos pedidos importados`)
+      loadShipments()
     } catch {
       setSyncToast('❌ Erro ao sincronizar com Yampi')
     }
