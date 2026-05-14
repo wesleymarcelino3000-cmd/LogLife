@@ -283,3 +283,33 @@ create index if not exists idx_tickets_status          on tickets(status);
 create index if not exists idx_webhook_logs_webhook_id on webhook_logs(webhook_id);
 create index if not exists idx_system_logs_created_at  on system_logs(created_at desc);
 create index if not exists idx_system_logs_level       on system_logs(level);
+
+-- ============================================================
+-- TABELA: app_users (usuários do sistema LogLife)
+-- ============================================================
+create table if not exists app_users (
+  id            uuid primary key default uuid_generate_v4(),
+  username      text not null unique,
+  name          text not null,
+  password_hash text not null,
+  salt          text not null,
+  role          text not null default 'operator'
+                check (role in ('admin','operator')),
+  active        boolean not null default true,
+  created_at    timestamptz not null default now()
+);
+
+alter table app_users enable row level security;
+create policy "service_role full access" on app_users using (true) with check (true);
+
+-- Usuário admin padrão
+-- Login: admin / Senha: admin123
+-- TROQUE A SENHA após o primeiro acesso!
+insert into app_users (username, name, password_hash, salt, role)
+values (
+  'admin',
+  'Administrador',
+  '22fde93016c6819db5a1e39e7ae5566c7ef397f9a41c2019547b0addb85f3a8d',
+  '179f5eb4abb7a434e8fad985bd3fcb54',
+  'admin'
+) on conflict (username) do nothing;

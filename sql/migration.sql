@@ -106,3 +106,39 @@ CREATE TRIGGER trg_insert_express_queue
 -- 5. Índice em order_id
 CREATE INDEX IF NOT EXISTS idx_shipments_order_id ON shipments(order_id);
 CREATE INDEX IF NOT EXISTS idx_system_logs_created_at ON system_logs(created_at desc);
+
+-- 6. Tabela app_users (estava faltando no schema original)
+CREATE TABLE IF NOT EXISTS app_users (
+  id            uuid primary key default uuid_generate_v4(),
+  username      text not null unique,
+  name          text not null,
+  password_hash text not null,
+  salt          text not null,
+  role          text not null default 'operator'
+                check (role in ('admin','operator')),
+  active        boolean not null default true,
+  created_at    timestamptz not null default now()
+);
+
+ALTER TABLE app_users ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE tablename = 'app_users' AND policyname = 'service_role full access'
+  ) THEN
+    CREATE POLICY "service_role full access" ON app_users USING (true) WITH CHECK (true);
+  END IF;
+END $$;
+
+-- Usuário admin padrão: login=admin / senha=admin123
+-- TROQUE A SENHA após o primeiro acesso!
+INSERT INTO app_users (username, name, password_hash, salt, role)
+VALUES (
+  'admin',
+  'Administrador',
+  '22fde93016c6819db5a1e39e7ae5566c7ef397f9a41c2019547b0addb85f3a8d',
+  '179f5eb4abb7a434e8fad985bd3fcb54',
+  'admin'
+) ON CONFLICT (username) DO NOTHING;
