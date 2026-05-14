@@ -173,36 +173,47 @@ export default function Home() {
       let totalSynced = 0, totalSkipped = 0, totalErrors = 0
 
       for (const yampi of yampiApis) {
-        setSyncProgress({ page: 1, synced: 0, skipped: 0, errors: 0, totalProcessed: 0, message: `Iniciando: ${yampi.name}...` })
+        let startPage = 1
+        let continueSync = true
 
-        const r = await fetch('/api/yampi-sync-progress', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ yampi_token: yampi.api_key, secret: yampi.secret || '', alias: yampi.url, url: yampi.url }),
-        })
+        while (continueSync) {
+          setSyncProgress({ page: startPage, synced: 0, skipped: 0, errors: 0, totalProcessed: 0, message: `Iniciando: ${yampi.name} (pág. ${startPage})...` })
 
-        const reader  = r.body?.getReader()
-        const decoder = new TextDecoder()
-        if (!reader) continue
+          const r = await fetch('/api/yampi-sync-progress', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ yampi_token: yampi.api_key, secret: yampi.secret || '', alias: yampi.url, url: yampi.url, start_page: startPage }),
+          })
 
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          const text  = decoder.decode(value)
-          const lines = text.split('\n').filter(l => l.startsWith('data: '))
-          for (const line of lines) {
-            try {
-              const data = JSON.parse(line.slice(6))
-              if (data.type === 'progress') {
-                setSyncProgress({ page: data.page, synced: data.synced, skipped: data.skipped, errors: data.errors, totalProcessed: data.totalProcessed || 0, message: `[${yampi.name}] ${data.message}` })
-              } else if (data.type === 'done') {
-                totalSynced  += data.synced
-                totalSkipped += data.skipped
-                totalErrors  += data.errors
-              } else if (data.type === 'error') {
-                setSyncToast(`❌ [${yampi.name}] ${data.message}`)
-              }
-            } catch {}
+          const reader  = r.body?.getReader()
+          const decoder = new TextDecoder()
+          if (!reader) break
+
+          continueSync = false
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            const text  = decoder.decode(value)
+            const lines = text.split('\n').filter((l: string) => l.startsWith('data: '))
+            for (const line of lines) {
+              try {
+                const data = JSON.parse(line.slice(6))
+                if (data.type === 'progress') {
+                  setSyncProgress({ page: data.page, synced: totalSynced + data.synced, skipped: totalSkipped + data.skipped, errors: data.errors, totalProcessed: data.totalProcessed || 0, message: `[${yampi.name}] ${data.message}` })
+                } else if (data.type === 'done') {
+                  totalSynced  += data.synced
+                  totalSkipped += data.skipped
+                  totalErrors  += data.errors
+                  // Se terminou por timeout (lastPage < MAX_PAGES e tinha pedidos), continua
+                  if (data.lastPage && data.lastPage >= startPage + 5 && data.totalProcessed >= 50) {
+                    startPage = data.lastPage + 1
+                    continueSync = true
+                  }
+                } else if (data.type === 'error') {
+                  setSyncToast(`❌ [${yampi.name}] ${data.message}`)
+                }
+              } catch {}
+            }
           }
         }
       }

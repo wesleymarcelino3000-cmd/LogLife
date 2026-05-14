@@ -124,7 +124,7 @@ async function importOrder(order: any): Promise<{ imported: boolean; skipped: bo
 
 export async function POST(req: NextRequest) {
   const body = await req.json()
-  const { yampi_token, secret, alias, url } = body
+  const { yampi_token, secret, alias, url, start_page = 1 } = body
 
   // Resolve alias
   let resolvedAlias = alias || ''
@@ -138,10 +138,12 @@ export async function POST(req: NextRequest) {
   const stream = new ReadableStream({
     async start(ctrl) {
       let synced = 0, skipped = 0, errors = 0, totalProcessed = 0
+      let lastPage = start_page
 
-      send(ctrl, { type: 'start', message: 'Iniciando sincronização...' })
+      send(ctrl, { type: 'start', message: `Iniciando sincronização da página ${start_page}...` })
 
-      for (let page = 1; page <= MAX_PAGES; page++) {
+      for (let page = start_page; page <= MAX_PAGES; page++) {
+        lastPage = page
         try {
           send(ctrl, { type: 'progress', page, synced, skipped, errors, message: `Buscando página ${page}...` })
 
@@ -181,14 +183,14 @@ export async function POST(req: NextRequest) {
           if (orders.length < 50) break
 
           // Delay entre páginas para evitar rate limit
-          await new Promise(r => setTimeout(r, 600))
+          await new Promise(r => setTimeout(r, 200))
         } catch (e: any) {
           send(ctrl, { type: 'error', message: `Erro na página ${page}: ${e.message}` })
           break
         }
       }
 
-      send(ctrl, { type: 'done', synced, skipped, errors, totalProcessed, message: `Concluído! ${synced} novos pedidos importados.` })
+      send(ctrl, { type: 'done', synced, skipped, errors, totalProcessed, lastPage, message: `Concluído! ${synced} novos pedidos importados.` })
       ctrl.close()
     }
   })
