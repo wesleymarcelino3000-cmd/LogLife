@@ -153,6 +153,7 @@ function buildOrderQuery(page = 1) {
   const params = new URLSearchParams()
   params.set('limit', '50')
   params.set('page', String(page))
+  params.set('include', 'invoices,items.product')
   return `/orders?${params.toString()}`
 }
 
@@ -230,6 +231,14 @@ async function importOrder(order: any) {
     data.value || data.total || data.subtotal || data.total_value || '0'
   ) || 0
 
+  // Extrai NF-e se disponível
+  const invoices   = data.invoices?.data || data.invoices || []
+  const invoice    = invoices[0] || null
+  const nfeChave   = (invoice?.access_key || invoice?.chave_acesso || invoice?.key || '').replace(/\D/g, '') || null
+  const nfeNumero  = invoice?.number || invoice?.numero || null
+  const nfeSerie   = invoice?.serie  || invoice?.series || null
+  const nfeXmlUrl  = invoice?.xml_url || invoice?.xml   || null
+
   const { error: insertErr } = await (supabaseAdmin as any)
     .from('shipments')
     .insert({
@@ -248,6 +257,11 @@ async function importOrder(order: any) {
       weight_kg: 0.5,
       is_express: isExpress,
       product_name: productName,
+      ordered_at: data.created_at || data.date || data.ordered_at || null,
+      nfe_chave:   nfeChave?.length === 44 ? nfeChave : null,
+      nfe_numero:  nfeNumero,
+      nfe_serie:   nfeSerie,
+      nfe_xml_url: nfeXmlUrl,
     })
 
   if (insertErr) return { imported: false, skipped: false, error: insertErr.message }
