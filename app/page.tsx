@@ -157,70 +157,50 @@ export default function Home() {
     setSyncResult(null)
     setSyncProgress(null)
     try {
-      const apisRes  = await fetch('/api/integrations')
-      const apisData = await apisRes.json()
-      const yampiApis = (apisData.data || []).filter((a: any) =>
-        a.name.toLowerCase().includes('yampi') && a.active && a.api_key
-      )
+      let totalSynced = 0, totalSkipped = 0, totalErrors = 0, totalUpdated = 0
 
-      if (!yampiApis.length) {
-        setSyncToast('❌ Configure ao menos uma integração Yampi primeiro')
-        setSyncing(false)
-        setTimeout(() => setSyncToast(''), 4000)
-        return
-      }
+      const r = await fetch('/api/yampi-sync-progress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
 
-      let totalSynced = 0, totalSkipped = 0, totalErrors = 0
+      const reader  = r.body?.getReader()
+      const decoder = new TextDecoder()
+      if (!reader) throw new Error('Sem resposta da sincronização')
 
-      for (const yampi of yampiApis) {
-        let startPage = 1
-        let continueSync = true
-
-        while (continueSync) {
-          setSyncProgress({ page: startPage, synced: 0, skipped: 0, errors: 0, totalProcessed: 0, message: `Iniciando: ${yampi.name} (pág. ${startPage})...` })
-
-          const r = await fetch('/api/yampi-sync-progress', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ yampi_token: yampi.api_key, secret: yampi.secret || '', alias: yampi.url, url: yampi.url, start_page: startPage }),
-          })
-
-          const reader  = r.body?.getReader()
-          const decoder = new TextDecoder()
-          if (!reader) break
-
-          continueSync = false
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-            const text  = decoder.decode(value)
-            const lines = text.split('\n').filter((l: string) => l.startsWith('data: '))
-            for (const line of lines) {
-              try {
-                const data = JSON.parse(line.slice(6))
-                if (data.type === 'progress') {
-                  setSyncProgress({ page: data.page, synced: totalSynced + data.synced, skipped: totalSkipped + data.skipped, errors: data.errors, totalProcessed: data.totalProcessed || 0, message: `[${yampi.name}] ${data.message}` })
-                } else if (data.type === 'done') {
-                  totalSynced  += data.synced
-                  totalSkipped += data.skipped
-                  totalErrors  += data.errors
-                  // Se terminou por timeout (lastPage < MAX_PAGES e tinha pedidos), continua
-                  if (data.lastPage && data.lastPage >= startPage + 5 && data.totalProcessed >= 50) {
-                    startPage = data.lastPage + 1
-                    continueSync = true
-                  }
-                } else if (data.type === 'error') {
-                  setSyncToast(`❌ [${yampi.name}] ${data.message}`)
-                }
-              } catch {}
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        const text  = decoder.decode(value)
+        const lines = text.split('\n').filter((l: string) => l.startsWith('data: '))
+        for (const line of lines) {
+          try {
+            const data = JSON.parse(line.slice(6))
+            if (data.type === 'progress') {
+              setSyncProgress({
+                page: data.page || 1,
+                synced: data.synced || 0,
+                skipped: data.skipped || 0,
+                errors: data.errors || 0,
+                totalProcessed: data.totalProcessed || 0,
+                message: data.message || 'Sincronizando pedidos...',
+              })
+            } else if (data.type === 'done') {
+              totalSynced  = data.synced || 0
+              totalSkipped = data.skipped || 0
+              totalErrors  = data.errors || 0
+              totalUpdated = data.updated || 0
+            } else if (data.type === 'error') {
+              setSyncToast(`❌ ${data.message}`)
             }
-          }
+          } catch {}
         }
       }
 
-      setSyncResult({ synced: totalSynced, skipped: totalSkipped, errors: totalErrors })
+      setSyncResult({ synced: totalSynced, skipped: totalSkipped, errors: totalErrors, updated: totalUpdated })
       setSyncProgress(null)
-      setSyncToast(`✅ Sincronizado! ${totalSynced} novos pedidos importados`)
+      setSyncToast(`✅ Sincronizado! ${totalSynced} novos e ${totalUpdated} atualizados`)
       loadShipments()
     } catch {
       setSyncToast('❌ Erro ao sincronizar com Yampi')
@@ -1094,14 +1074,15 @@ function LabelsPage({syncing, syncResult, runYampiSync, navCreate, syncToast, te
       <div style={{background:'rgba(34,197,94,.08)',border:'1px solid rgba(34,197,94,.25)',borderRadius:10,padding:'10px 16px',marginBottom:12,display:'flex',gap:16,flexWrap:'wrap',alignItems:'center',fontSize:12}}>
         <span style={{fontWeight:600,color:'var(--green)'}}>✅ Sincronização concluída</span>
         <span>📦 <strong>{syncResult.synced}</strong> novos</span>
-        <span>⏭ <strong>{syncResult.skipped}</strong> já existiam</span>
+        <span>♻️ <strong>{syncResult.updated || 0}</strong> atualizados</span>
+        <span>⏭ <strong>{syncResult.skipped}</strong> fora do filtro</span>
         {syncResult.errors>0&&<span style={{color:'var(--red)'}}>❌ <strong>{syncResult.errors}</strong> erros</span>}
       </div>
     )}
 
     {syncing && (
       <div style={{background:'rgba(99,102,241,.08)',border:'1px solid rgba(99,102,241,.2)',borderRadius:10,padding:'10px 16px',marginBottom:12,fontSize:12,color:'#818cf8'}}>
-        🔄 Sincronizando com Yampi... buscando pedidos prontos para envio
+        🔄 Sincronizando com Yampi... buscando Pedido autorizado, Pagamento aprovado, Produtos em separação, Faturado e Pronto para envio
       </div>
     )}
 
@@ -1116,8 +1097,8 @@ function LabelsPage({syncing, syncResult, runYampiSync, navCreate, syncToast, te
     {/* TABLE */}
     <div style={{background:'var(--surface)',border:'1px solid var(--border)',borderRadius:14,overflow:'hidden'}}>
       {/* Header */}
-      <div style={{display:'grid',gridTemplateColumns:'40px 130px 1fr 1fr 1fr 120px 100px',gap:0,padding:'10px 16px',borderBottom:'1px solid var(--border)',background:'var(--bg3)'}}>
-        {['','STATUS','PEDIDO','CLIENTE','PRODUTO','DATA','AÇÃO'].map(h=>(
+      <div style={{display:'grid',gridTemplateColumns:'42px 134px 260px 1.1fr 1.35fr 170px 188px',gap:0,padding:'10px 16px',borderBottom:'1px solid var(--border)',background:'var(--bg3)'}}>
+        {['','STATUS','PEDIDO','CLIENTE','PRODUTO','DATA ↓','AÇÃO'].map(h=>(
           <div key={h} style={{fontSize:10,color:'var(--text3)',letterSpacing:'1px',textTransform:'uppercase',fontWeight:600}}>{h}</div>
         ))}
       </div>
@@ -1137,9 +1118,9 @@ function LabelsPage({syncing, syncResult, runYampiSync, navCreate, syncToast, te
       )}
 
       {!loading && filtered.map((s,i)=>(
-        <div key={s.id} style={{display:'grid',gridTemplateColumns:'40px 130px 1fr 1fr 1fr 120px 100px',gap:0,padding:'12px 16px',borderBottom:i<filtered.length-1?'1px solid var(--border)':'none',alignItems:'center',background:s.is_express?'rgba(255,77,0,.03)':undefined,transition:'background .15s'}} className="shiprow">
+        <div key={s.id} style={{display:'grid',gridTemplateColumns:'42px 134px 260px 1.1fr 1.35fr 170px 188px',gap:0,padding:'12px 16px',borderBottom:i<filtered.length-1?'1px solid var(--border)':'none',alignItems:'center',background:s.is_express?'rgba(255,77,0,.03)':undefined,transition:'background .15s'}} className="shiprow">
           {/* Checkbox */}
-          <div style={{width:18,height:18,border:'2px solid var(--border2)',borderRadius:4,cursor:'pointer',flexShrink:0}}></div>
+          <div style={{width:18,height:18,border:'1.5px solid #0ea5e9',borderRadius:999,cursor:'pointer',flexShrink:0,boxShadow:'0 0 0 1px rgba(14,165,233,.08)'}}></div>
 
           {/* Status */}
           <div style={{display:'flex',flexDirection:'column',gap:4}}>
@@ -1152,15 +1133,15 @@ function LabelsPage({syncing, syncResult, runYampiSync, navCreate, syncToast, te
               {s.status==='pending'?'✓ Pronto':s.status==='in_transit'?'Em trânsito':s.status==='delivered'?'Entregue':'Pendente'}
             </span>
             {s.is_express && <span style={{fontSize:9,fontWeight:700,color:'var(--express)',background:'rgba(255,77,0,.12)',borderRadius:4,padding:'2px 6px',width:'fit-content'}}>⚡ EXPRESS</span>}
-            {s.nfe_chave
-              ? <span style={{fontSize:10,fontWeight:600,color:'var(--green)',background:'rgba(34,197,94,.12)',borderRadius:4,padding:'2px 6px',width:'fit-content'}}>📄 Com NF-e</span>
-              : <span style={{fontSize:10,color:'var(--text3)',background:'rgba(255,255,255,.05)',borderRadius:4,padding:'2px 6px',width:'fit-content'}}>Sem NF-e</span>
-            }
           </div>
 
           {/* Pedido */}
-          <div>
-            <div style={{fontSize:13,fontWeight:700,color:'var(--text)',fontFamily:'monospace'}}>#{s.order_id}</div>
+          <div style={{display:'flex',flexDirection:'column',gap:6}}>
+            <div style={{fontSize:14,fontWeight:800,color:'var(--text)',fontFamily:'monospace',lineHeight:1.15}}>#{s.order_id}</div>
+            {s.nfe_chave
+              ? <span style={{fontSize:11,fontWeight:700,color:'var(--green)',border:'1px solid rgba(34,197,94,.45)',background:'rgba(34,197,94,.12)',borderRadius:999,padding:'3px 10px',width:'fit-content'}}>▤ Com NF-e</span>
+              : <span style={{fontSize:11,fontWeight:700,color:'#fbbf24',border:'1px solid rgba(245,158,11,.55)',background:'rgba(245,158,11,.10)',borderRadius:999,padding:'3px 10px',width:'fit-content'}}>▤ Sem NF-e</span>
+            }
           </div>
 
           {/* Cliente */}
@@ -1172,24 +1153,24 @@ function LabelsPage({syncing, syncResult, runYampiSync, navCreate, syncToast, te
 
           {/* Produto */}
           <div>
-            <div style={{fontSize:13,fontWeight:600,color:'var(--text)'}}>{s.product_name || s.items?.[0]?.name || '—'}</div>
-            {s.product_name || s.items?.[0]?.name
-              ? <div style={{fontSize:11,color:'var(--text3)'}}>{s.items?.[0]?.quantity ? `Qtd: ${s.items[0].quantity}` : ''}</div>
-              : <div style={{fontSize:11,color:'var(--text3)'}}>Produto não informado</div>
-            }
+            <div style={{fontSize:13,fontWeight:500,color:'var(--text3)',whiteSpace:'pre-line',lineHeight:1.45}}>{s.product_name || s.items?.[0]?.name || 'Produto não informado'}</div>
           </div>
 
           {/* Data */}
-          <div style={{fontSize:11,color:'var(--text3)',fontFamily:'monospace'}}>
+          <div style={{fontSize:13,color:'var(--text3)',fontFamily:'monospace'}}>
             {(s.ordered_at || s.created_at) ? new Date(s.ordered_at || s.created_at).toLocaleDateString('pt-BR') : '—'}
-            <div>{(s.ordered_at || s.created_at) ? new Date(s.ordered_at || s.created_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) : ''}</div>
+            <span style={{marginLeft:8}}>{(s.ordered_at || s.created_at) ? new Date(s.ordered_at || s.created_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) : ''}</span>
           </div>
 
           {/* Ação */}
-          <div>
+          <div style={{display:'flex',alignItems:'center',gap:12,justifyContent:'flex-end'}}>
+            <button title="Editar" className="iconbtn">✎</button>
+            <button title="NF-e/XML" className="iconbtn nf">▤</button>
+            <button title="Marcar" className="iconbtn">⚐</button>
+            <button title="Remover" className="iconbtn danger">⊗</button>
             <button
               className="btn btn-primary"
-              style={{fontSize:11,padding:'6px 12px',background:'linear-gradient(135deg,#2563eb,#1d4ed8)',opacity:generating===s.id?.6:1}}
+              style={{fontSize:13,fontWeight:800,padding:'10px 18px',borderRadius:12,background:'linear-gradient(135deg,#10b981,#059669)',boxShadow:'0 10px 24px rgba(16,185,129,.22)',opacity:generating===s.id?.6:1}}
               onClick={()=>generateLabel(s)}
               disabled={generating===s.id}
             >
@@ -1200,7 +1181,7 @@ function LabelsPage({syncing, syncResult, runYampiSync, navCreate, syncToast, te
       ))}
     </div>
 
-    <style>{`.shiprow:hover{background:var(--surface2)!important;}`}</style>
+    <style>{`.shiprow:hover{background:var(--surface2)!important}.iconbtn{width:26px;height:26px;border:0;background:transparent;color:var(--text2);font-size:18px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}.iconbtn:hover{color:var(--text)}.iconbtn.nf{border:1px solid rgba(245,158,11,.6);border-radius:9px;color:#fbbf24;background:rgba(245,158,11,.08);font-size:14px}.iconbtn.danger{color:#ef4444;font-size:18px}`}</style>
 
     {/* PAGINAÇÃO */}
     {totalPages > 1 && (
