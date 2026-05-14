@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic'
+
 // app/api/errors/route.ts
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server'
