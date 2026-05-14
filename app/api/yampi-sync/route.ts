@@ -303,13 +303,13 @@ export async function POST(req: NextRequest) {
   }
 
   const knownStatusAliases = statuses.map((s) => s.key).filter(Boolean)
-  const pagesToSync = [1, 2, 3]
+  const MAX_PAGES = 200 // até 10000 pedidos por sincronização
 
   if (statuses.length === 0) {
-    errorDetails.push(`Não foi possível listar os status da Yampi. A sincronização continuará buscando pedidos recentes sem filtro. Detalhes: ${statusResult.details.join(' | ') || 'sem detalhes'}`)
+    errorDetails.push(`Não foi possível listar os status da Yampi. Detalhes: ${statusResult.details.join(' | ') || 'sem detalhes'}`)
   }
 
-  for (const page of pagesToSync) {
+  for (let page = 1; page <= MAX_PAGES; page++) {
     try {
       const result = await yampiGet(alias, buildOrderQuery(page), yampiToken, yampiSecret)
       const apiMessage = result.json?.message || result.json?.error || result.text || 'Sem resposta da API'
@@ -317,25 +317,18 @@ export async function POST(req: NextRequest) {
       if (!result.res.ok) {
         errors++
         const shortMessage = String(apiMessage).slice(0, 700)
-        console.error('[Yampi Sync] Erro na API', {
-          page,
-          endpoint: '/orders sem include e sem q[status_alias_eq]',
-          http_status: result.res.status,
-          response: shortMessage,
-        })
+        console.error('[Yampi Sync] Erro na API', { page, http_status: result.res.status, response: shortMessage })
         errorDetails.push(`Pedidos página ${page}: HTTP ${result.res.status} - ${shortMessage}`)
-        continue
+        break // para em erro de autenticação
       }
 
       const orders = extractArray(result.json)
-      if (orders.length === 0) break
+      if (orders.length === 0) break // sem mais pedidos
 
       for (const order of orders) {
         try {
           const orderStatusAlias = getOrderStatusAlias(order)
 
-          // Se a API retornou status conhecidos no pedido, mantemos só os pedidos que fazem parte da loja.
-          // Se não retornou status no pedido, não bloqueamos a importação, pois /orders sem include pode vir enxuto.
           if (knownStatusAliases.length > 0 && orderStatusAlias && !knownStatusAliases.includes(orderStatusAlias)) {
             skipped++
             continue
@@ -354,12 +347,13 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      if (orders.length < 50) break
+      if (orders.length < 50) break // última página
     } catch (e: any) {
       errors++
       const msg = e?.name === 'AbortError' ? 'Timeout ao consultar a Yampi' : e.message
       console.error('[Yampi Sync] Exceção', { page, error: msg })
       errorDetails.push(`Pedidos página ${page}: ${msg}`)
+      break
     }
   }
 
