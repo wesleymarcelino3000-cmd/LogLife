@@ -94,6 +94,16 @@ export async function POST(req: NextRequest) {
     const yampiStatus = order.status?.alias || order.status || ''
     const internalStatus = STATUS_MAP[yampiStatus] || 'pending'
 
+    // Extrai nome do produto
+    const items = order.items?.data || order.items || []
+    const productName = items.length > 0
+      ? items.map((item: any) => {
+          const qty = item.quantity || item.qty || 1
+          const name = item.product?.data?.title || item.product?.title || item.name || item.title || item.sku || ''
+          return name ? `${qty}x ${name}` : ''
+        }).filter(Boolean).join('\n')
+      : null
+
     // Verifica se pedido já existe
     const { data: existing } = await (supabaseAdmin as any)
       .from('shipments')
@@ -138,6 +148,7 @@ export async function POST(req: NextRequest) {
         value_brl:       parseFloat(order.value || order.total || '0'),
         weight_kg:       0.5,
         is_express:      isExpress,
+        product_name:    productName,
       })
       .select()
       .single()

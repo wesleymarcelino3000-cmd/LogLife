@@ -995,7 +995,12 @@ function LabelsPage({syncing, syncResult, runYampiSync, navCreate, syncToast, te
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,flexWrap:'wrap',gap:8}}>
       <div>
         <div style={{fontSize:16,fontWeight:700}}>Fila de Etiquetas</div>
-        <div style={{fontSize:12,color:'var(--text3)',marginTop:2}}>{shipments.length} pedidos · {pending} pendentes · {express} express</div>
+        <div style={{fontSize:12,color:'var(--text3)',marginTop:2}}>
+          <span style={{color:'var(--text2)',fontWeight:600}}>{total}</span> pedidos sincronizados no total
+          &nbsp;·&nbsp;
+          <span style={{color:'var(--accent)',fontWeight:600}}>{filtered.length}</span> nesta página
+          &nbsp;·&nbsp;{pending} pendentes · {express} express
+        </div>
       </div>
       <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
         <button className="btn btn-ghost" style={{fontSize:12,opacity:syncing?.6:1,borderColor:'rgba(99,102,241,.3)',color:'#818cf8'}} onClick={handleSync} disabled={syncing}>

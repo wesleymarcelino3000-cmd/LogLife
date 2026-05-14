@@ -8,12 +8,21 @@ import { supabaseAdmin } from '@/lib/supabase'
 const EXPRESS_CEPS = ['35585-000', '37925-000']
 const YAMPI_API_BASE = 'https://api.dooki.com.br/v2'
 
+// Apenas esses status são importados
+const ELIGIBLE_STATUS_ALIASES = [
+  'authorized',
+  'payment_approved',
+  'separating',
+  'invoiced',
+  'ready_to_ship',
+]
+
 const STATUS_LABELS: Record<string, string> = {
-  authorized: 'Pedido autorizado',
+  authorized:       'Pedido autorizado',
   payment_approved: 'Pagamento aprovado',
-  separating: 'Produtos em separação',
-  invoiced: 'Faturado',
-  ready_to_ship: 'Pronto para envio',
+  separating:       'Produtos em separação',
+  invoiced:         'Faturado',
+  ready_to_ship:    'Pronto para envio',
 }
 
 function clean(value: unknown) {
@@ -175,8 +184,24 @@ async function importOrder(order: any) {
   const orderId = getOrderId(data)
   if (!orderId) return { imported: false, skipped: false, error: 'Pedido sem ID' }
 
+  // Filtra apenas status elegíveis
+  const orderStatusAlias = getOrderStatusAlias(order)
+  if (orderStatusAlias && !ELIGIBLE_STATUS_ALIASES.includes(orderStatusAlias)) {
+    return { imported: false, skipped: true }
+  }
+
   const shipping = data.shipping_address?.data || data.shipping_address || data.shipping?.address?.data || data.shipping?.address || {}
   const customer = data.customer?.data || data.customer || data.buyer?.data || data.buyer || {}
+
+  // Extrai nome do produto dos itens do pedido
+  const items = data.items?.data || data.items || []
+  const productName = items.length > 0
+    ? items.map((item: any) => {
+        const qty = item.quantity || item.qty || 1
+        const name = item.product?.data?.title || item.product?.title || item.name || item.title || item.sku || ''
+        return name ? `${qty}x ${name}` : ''
+      }).filter(Boolean).join('\n')
+    : null
 
   const cepRaw = (
     shipping.zipcode || shipping.zip_code || shipping.cep ||
@@ -222,6 +247,7 @@ async function importOrder(order: any) {
       value_brl: value,
       weight_kg: 0.5,
       is_express: isExpress,
+      product_name: productName,
     })
 
   if (insertErr) return { imported: false, skipped: false, error: insertErr.message }
