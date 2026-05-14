@@ -11,7 +11,7 @@ create extension if not exists "uuid-ossp";
 -- ============================================================
 create table if not exists shipments (
   id            uuid primary key default uuid_generate_v4(),
-  order_id      text not null,
+  order_id      text not null unique,
   tracking_code text,
   carrier       text not null check (carrier in ('jt','loggi','yampi')),
   status        text not null default 'pending'
@@ -40,14 +40,24 @@ create table if not exists shipments (
   height_cm     numeric(6,1),
   value_brl     numeric(10,2),
 
-  -- Express (Pimenta / Piumhi)
-  is_express    boolean not null default false,
+  -- Produto
+  product_name  text,
 
   -- Datas
+  ordered_at    timestamptz,
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now(),
   posted_at     timestamptz,
-  delivered_at  timestamptz
+  delivered_at  timestamptz,
+
+  -- Express (Pimenta / Piumhi)
+  is_express    boolean not null default false,
+
+  -- NF-e
+  nfe_chave     text,
+  nfe_numero    text,
+  nfe_serie     text,
+  nfe_xml_url   text
 );
 
 -- ============================================================
@@ -138,6 +148,19 @@ create table if not exists webhook_logs (
 );
 
 -- ============================================================
+-- TABELA: system_logs (logs internos do sistema)
+-- ============================================================
+create table if not exists system_logs (
+  id         uuid primary key default uuid_generate_v4(),
+  level      text not null default 'info'
+             check (level in ('info','warning','error','success')),
+  message    text not null,
+  source     text,
+  details    jsonb,
+  created_at timestamptz not null default now()
+);
+
+-- ============================================================
 -- TABELA: freight_quotes (histórico de simulações)
 -- ============================================================
 create table if not exists freight_quotes (
@@ -152,6 +175,7 @@ create table if not exists freight_quotes (
 
 -- ============================================================
 -- FUNÇÃO: auto-detectar CEP express ao inserir shipment
+-- CORRIGIDO: BEFORE INSERT para que new.is_express seja aplicado
 -- ============================================================
 create or replace function fn_check_express_cep()
 returns trigger language plpgsql as $$
@@ -165,17 +189,43 @@ begin
 
   if found then
     new.is_express := true;
-    insert into express_queue (shipment_id, cep, city)
-    values (new.id, v_cep_row.cep, v_cep_row.city);
   end if;
 
   return new;
 end;
 $$;
 
+-- CORRIGIDO: BEFORE INSERT (era AFTER INSERT — não funcionava)
 create trigger trg_check_express_cep
-  after insert on shipments
+  before insert on shipments
   for each row execute function fn_check_express_cep();
+
+-- Trigger separado para inserir na express_queue APÓS o shipment existir
+create or replace function fn_insert_express_queue()
+returns trigger language plpgsql as $$
+declare
+  v_cep_row express_ceps%rowtype;
+begin
+  if new.is_express then
+    select * into v_cep_row
+    from express_ceps
+    where cep = new.recipient_cep and active = true
+    limit 1;
+
+    if found then
+      insert into express_queue (shipment_id, cep, city)
+      values (new.id, v_cep_row.cep, v_cep_row.city)
+      on conflict do nothing;
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+create trigger trg_insert_express_queue
+  after insert on shipments
+  for each row execute function fn_insert_express_queue();
 
 -- ============================================================
 -- FUNÇÃO: atualizar updated_at automaticamente
@@ -199,17 +249,17 @@ create trigger trg_tickets_updated_at
 -- ============================================================
 -- ROW LEVEL SECURITY (RLS)
 -- ============================================================
-alter table shipments     enable row level security;
-alter table labels        enable row level security;
-alter table express_queue enable row level security;
-alter table express_ceps  enable row level security;
-alter table tickets       enable row level security;
-alter table webhooks      enable row level security;
-alter table webhook_logs  enable row level security;
+alter table shipments      enable row level security;
+alter table labels         enable row level security;
+alter table express_queue  enable row level security;
+alter table express_ceps   enable row level security;
+alter table tickets        enable row level security;
+alter table webhooks       enable row level security;
+alter table webhook_logs   enable row level security;
 alter table freight_quotes enable row level security;
+alter table system_logs    enable row level security;
 
 -- Políticas abertas para service_role (backend)
--- Anon key só lê — o front usa service_role via API routes
 create policy "service_role full access" on shipments      using (true) with check (true);
 create policy "service_role full access" on labels         using (true) with check (true);
 create policy "service_role full access" on express_queue  using (true) with check (true);
@@ -218,14 +268,18 @@ create policy "service_role full access" on tickets        using (true) with che
 create policy "service_role full access" on webhooks       using (true) with check (true);
 create policy "service_role full access" on webhook_logs   using (true) with check (true);
 create policy "service_role full access" on freight_quotes using (true) with check (true);
+create policy "service_role full access" on system_logs    using (true) with check (true);
 
 -- ============================================================
 -- ÍNDICES
 -- ============================================================
 create index if not exists idx_shipments_status        on shipments(status);
+create index if not exists idx_shipments_order_id      on shipments(order_id);
 create index if not exists idx_shipments_is_express    on shipments(is_express) where is_express = true;
 create index if not exists idx_shipments_recipient_cep on shipments(recipient_cep);
 create index if not exists idx_shipments_created_at    on shipments(created_at desc);
 create index if not exists idx_express_queue_status    on express_queue(status);
 create index if not exists idx_tickets_status          on tickets(status);
 create index if not exists idx_webhook_logs_webhook_id on webhook_logs(webhook_id);
+create index if not exists idx_system_logs_created_at  on system_logs(created_at desc);
+create index if not exists idx_system_logs_level       on system_logs(level);

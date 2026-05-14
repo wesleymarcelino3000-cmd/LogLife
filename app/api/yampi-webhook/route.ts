@@ -1,179 +1,65 @@
 export const dynamic = 'force-dynamic'
 
-// app/api/yampi-webhook/route.ts
+// app/api/yampi-webhook/test/route.ts
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 
 const EXPRESS_CEPS = ['35585-000', '37925-000']
 
-// Mapeamento de status Yampi → status interno
-const STATUS_MAP: Record<string, string> = {
-  'pending':          'pending',
-  'authorized':       'pending',
-  'payment_approved': 'pending',
-  'paid':             'pending',
-  'handling_products':'pending',
-  'ready_for_shipping':'pending',
-  'created':          'pending',
-  'separating':       'pending',
-  'invoiced':         'pending',
-  'ready_to_ship':    'pending',
-  'shipped':          'in_transit',
-  'delivered':        'delivered',
-  'canceled':         'failed',
-  'returned':         'returned',
-}
-
-// GET — retorna a URL para configurar na Yampi
-export async function GET(req: NextRequest) {
-  const host = req.headers.get('host') || 'log-life-brown.vercel.app'
-  const proto = host.includes('localhost') ? 'http' : 'https'
-  const webhookUrl = `${proto}://${host}/api/yampi-webhook`
-
-  return NextResponse.json({
-    webhook_url: webhookUrl,
-    method: 'POST',
-    description: 'URL para configurar nos webhooks da Yampi',
-    events_supported: [
-      'order.created',
-      'order.status.authorized',
-      'order.status.payment_approved',
-      'order.status.separating',
-      'order.status.invoiced',
-      'order.status.ready_to_ship',
-      'order.status.shipped',
-      'order.status.delivered',
-      'order.status.canceled',
-      'order.status.returned',
-    ],
-    instructions: [
-      '1. Acesse sua loja na Yampi',
-      '2. Vá em Configurações → Webhooks',
-      '3. Clique em + Novo Webhook',
-      '4. Cole a webhook_url acima',
-      '5. Selecione os eventos desejados',
-      '6. Salve e ative o webhook',
-    ],
-  })
-}
-
-// POST — recebe eventos da Yampi
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-
-    // Log do evento recebido
-    const event   = body.event || body.type || body.action || 'unknown'
-
-    // A Yampi pode enviar o pedido em vários formatos
-    const order   = body.data?.order || body.data?.resource || body.data || body.order || body.resource || body || {}
-    const orderId = String(order.id || order.order_id || order.number || body.id || '')
-
-    console.log(`[Yampi Webhook] Event: ${event}, Order: ${orderId}, Keys: ${Object.keys(body).join(',')}`, JSON.stringify(body).slice(0, 500))
-
-    // Salva log no banco
-    await (supabaseAdmin as any)
-      .from('webhook_logs')
-      .insert({
-        webhook_id:  null,
-        event:       `yampi.${event}`,
-        payload:     body,
-        status_code: 200,
-        success:     true,
-      })
-
-    if (!orderId) {
-      return NextResponse.json({ received: true, message: 'Evento sem order_id ignorado' })
-    }
-
-    // Extrai dados do pedido
-    const shipping  = order.shipping_address?.data || order.shipping_address || order.address?.data || order.address || {}
-    const customer  = order.customer?.data || order.customer || order.buyer?.data || order.buyer || {}
-    const cepRaw    = (shipping.zipcode || shipping.zip_code || shipping.cep || customer.zipcode || '').replace(/\D/g, '')
-    const cep       = cepRaw.length === 8 ? `${cepRaw.slice(0,5)}-${cepRaw.slice(5)}` : ''
+    
+    // Simula um pedido de teste
+    const cepRaw = (body.cep || '01310100').replace(/\D/g, '')
+    const cep = cepRaw.length === 8 ? `${cepRaw.slice(0,5)}-${cepRaw.slice(5)}` : '01310-100'
     const isExpress = EXPRESS_CEPS.includes(cep)
-    const yampiStatus = order.status?.alias || order.status?.key || order.status || body.status?.alias || ''
-    const internalStatus = STATUS_MAP[yampiStatus] || 'pending'
 
-    console.log(`[Yampi Webhook] CEP: ${cep}, Status: ${yampiStatus}, Customer: ${customer.first_name||''}`)
+    // Gera order_id único para teste
+    const orderId = `TEST_${Date.now()}`
 
-    // Extrai nome do produto
-    const items = order.items?.data || order.items || []
-    const productName = items.length > 0
-      ? items.map((item: any) => {
-          const qty = item.quantity || item.qty || 1
-          const name = item.product?.data?.title || item.product?.title || item.name || item.title || item.sku || ''
-          return name ? `${qty}x ${name}` : ''
-        }).filter(Boolean).join('\n')
-      : null
-
-    // Verifica se pedido já existe
-    const { data: existing } = await (supabaseAdmin as any)
-      .from('shipments')
-      .select('id, status')
-      .eq('order_id', orderId)
-      .maybeSingle()
-
-    if (existing) {
-      // Atualiza status se pedido já existe
-      await (supabaseAdmin as any)
-        .from('shipments')
-        .update({
-          status:       internalStatus,
-          delivered_at: internalStatus === 'delivered' ? new Date().toISOString() : null,
-        })
-        .eq('order_id', orderId)
-
-      console.log(`[Yampi Webhook] Updated order ${orderId} → ${internalStatus}`)
-      return NextResponse.json({ received: true, action: 'updated', order_id: orderId, status: internalStatus })
-    }
-
-    // Cria novo pedido se não existe e status é elegível
-    const eligibleStatuses = ['authorized','payment_approved','separating','invoiced','ready_to_ship','paid','handling_products','ready_for_shipping','created']
-    if (!eligibleStatuses.includes(yampiStatus)) {
-      return NextResponse.json({ received: true, action: 'skipped', reason: `Status ${yampiStatus} não elegível para criação` })
-    }
-
-    const { data: newShipment, error: insertErr } = await (supabaseAdmin as any)
+    const { data, error } = await (supabaseAdmin as any)
       .from('shipments')
       .insert({
         order_id:        orderId,
-        carrier:         'jt',
-        status:          internalStatus,
-        recipient_name:  `${customer.first_name||''} ${customer.last_name||''}`.trim() || 'Cliente',
-        recipient_phone: customer.phone || null,
+        carrier:         body.carrier || 'jt',
+        status:          'pending',
+        recipient_name:  body.name || 'Cliente Teste',
+        recipient_phone: body.phone || null,
         recipient_cep:   cep,
-        recipient_city:  shipping.city || '',
-        recipient_state: shipping.state || '',
-        recipient_addr:  shipping.street || shipping.address || '',
-        recipient_num:   shipping.number || '',
-        recipient_comp:  shipping.complement || '',
-        value_brl:       parseFloat(order.value || order.total || '0'),
-        weight_kg:       0.5,
+        recipient_city:  body.city || 'São Paulo',
+        recipient_state: body.state || 'SP',
+        recipient_addr:  body.address || 'Rua de Teste',
+        recipient_num:   body.number || '123',
+        recipient_comp:  '',
+        value_brl:       parseFloat(body.value || '100'),
+        weight_kg:       parseFloat(body.weight || '0.5'),
         is_express:      isExpress,
-        product_name:    productName,
-        ordered_at:      order.created_at || order.date || order.ordered_at || null,
       })
       .select()
       .single()
 
-    if (insertErr) {
-      console.error('[Yampi Webhook] Insert error:', insertErr)
-      return NextResponse.json({ received: true, action: 'error', error: insertErr.message }, { status: 500 })
-    }
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-    console.log(`[Yampi Webhook] Created order ${orderId}, express: ${isExpress}`)
-    return NextResponse.json({
-      received:   true,
-      action:     'created',
-      order_id:   orderId,
-      is_express: isExpress,
-      status:     internalStatus,
+    // Log
+    await (supabaseAdmin as any).from('system_logs').insert({
+      level:   'info',
+      message: `Pedido de teste criado: ${orderId}${isExpress ? ' ⚡ EXPRESS' : ''}`,
+      source:  'yampi-webhook-test',
+      details: { order_id: orderId, cep, is_express: isExpress },
     })
 
+    return NextResponse.json({
+      success:    true,
+      order_id:   orderId,
+      is_express: isExpress,
+      cep,
+      message:    isExpress 
+        ? `✅ Pedido criado e adicionado à fila Entregar Agora (${cep})!`
+        : `✅ Pedido de teste criado com sucesso!`
+    })
   } catch (e: any) {
-    console.error('[Yampi Webhook] Error:', e)
-    return NextResponse.json({ received: true, error: e.message }, { status: 500 })
+    return NextResponse.json({ error: e.message }, { status: 500 })
   }
 }
