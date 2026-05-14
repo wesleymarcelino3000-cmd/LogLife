@@ -124,6 +124,7 @@ export default function Home() {
   const [syncing, setSyncing]       = useState(false)
   const [syncResult, setSyncResult] = useState<{synced:number;skipped:number;errors:number}|null>(null)
   const [syncToast, setSyncToast]   = useState('')
+  const [syncProgress, setSyncProgress] = useState<{page:number;synced:number;skipped:number;errors:number;totalProcessed:number;message:string}|null>(null)
 
   // Teste de webhook (pedido simulado)
   async function testWebhook(cep?: string) {
@@ -152,9 +153,9 @@ export default function Home() {
   }
 
   async function runYampiSync() {
-    // Busca credenciais Yampi das APIs salvas
     setSyncing(true)
     setSyncResult(null)
+    setSyncProgress(null)
     try {
       const apisRes = await fetch('/api/integrations')
       const apisData = await apisRes.json()
@@ -165,20 +166,46 @@ export default function Home() {
         setTimeout(() => setSyncToast(''), 4000)
         return
       }
-      // A rota /api/yampi-sync agora aceita alias puro ou URL completa.
-      // Ex.: melasonina ou https://api.dooki.com.br/v2/melasonina
-      const r = await fetch('/api/yampi-sync', {
+
+      const r = await fetch('/api/yampi-sync-progress', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ yampi_token: yampi.api_key, secret: yampi.secret || '', alias: yampi.url, url: yampi.url }),
       })
-      const result = await r.json()
-      setSyncResult({ synced: result.synced || 0, skipped: result.skipped || 0, errors: result.errors || 0 })
-      setSyncToast(`✅ Sincronizado! ${result.synced} novos pedidos importados`)
+
+      const reader = r.body?.getReader()
+      const decoder = new TextDecoder()
+
+      if (!reader) throw new Error('Sem stream')
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        const text = decoder.decode(value)
+        const lines = text.split('\n').filter(l => l.startsWith('data: '))
+
+        for (const line of lines) {
+          try {
+            const data = JSON.parse(line.slice(6))
+            if (data.type === 'progress') {
+              setSyncProgress({ page: data.page, synced: data.synced, skipped: data.skipped, errors: data.errors, totalProcessed: data.totalProcessed || 0, message: data.message })
+            } else if (data.type === 'done') {
+              setSyncResult({ synced: data.synced, skipped: data.skipped, errors: data.errors })
+              setSyncProgress(null)
+              setSyncToast(`✅ Sincronizado! ${data.synced} novos pedidos importados`)
+              loadShipments()
+            } else if (data.type === 'error') {
+              setSyncToast(`❌ ${data.message}`)
+            }
+          } catch {}
+        }
+      }
     } catch {
       setSyncToast('❌ Erro ao sincronizar com Yampi')
     }
     setSyncing(false)
+    setSyncProgress(null)
     setTimeout(() => setSyncToast(''), 5000)
   }
 
@@ -463,6 +490,33 @@ export default function Home() {
                 {syncResult.errors>0 && <span style={{fontSize:12,color:'var(--red)'}}>❌ <strong>{syncResult.errors}</strong> erros</span>}
                 <div style={{marginLeft:'auto',fontSize:11,color:'var(--text3)'}}>
                   Status sincronizados: Pedido autorizado · Pagamento aprovado · Em separação · Faturado · Pronto para envio
+                </div>
+              </div>
+            )}
+
+            {syncProgress && (
+              <div style={{background:'rgba(99,102,241,.08)',border:'1px solid rgba(99,102,241,.25)',borderRadius:10,padding:'14px 16px',marginBottom:16}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                  <span style={{fontSize:13,fontWeight:600,color:'#818cf8'}}>🔄 Sincronizando...</span>
+                  <span style={{fontSize:12,color:'var(--text3)'}}>{syncProgress.message}</span>
+                </div>
+                {/* Barra de progresso animada */}
+                <div style={{background:'var(--surface2)',borderRadius:99,height:8,overflow:'hidden',marginBottom:10}}>
+                  <div style={{
+                    height:'100%',
+                    borderRadius:99,
+                    background:'linear-gradient(90deg,#6366f1,#818cf8)',
+                    width:`${Math.min(100, (syncProgress.page / 200) * 100)}%`,
+                    transition:'width 0.4s ease',
+                    boxShadow:'0 0 8px rgba(99,102,241,0.6)',
+                    animation:'shimmer 1.5s infinite',
+                  }}/>
+                </div>
+                <div style={{display:'flex',gap:20,flexWrap:'wrap'}}>
+                  <span style={{fontSize:12,color:'var(--green)'}}>📦 <strong>{syncProgress.synced}</strong> novos</span>
+                  <span style={{fontSize:12,color:'var(--text3)'}}>⏭ <strong>{syncProgress.skipped}</strong> já existiam</span>
+                  {syncProgress.errors>0 && <span style={{fontSize:12,color:'var(--red)'}}>❌ <strong>{syncProgress.errors}</strong> erros</span>}
+                  <span style={{fontSize:12,color:'var(--text3)',marginLeft:'auto'}}>Página {syncProgress.page} · {syncProgress.totalProcessed} processados</span>
                 </div>
               </div>
             )}
@@ -1103,8 +1157,8 @@ function LabelsPage({syncing, syncResult, runYampiSync, navCreate, syncToast, te
 
           {/* Data */}
           <div style={{fontSize:11,color:'var(--text3)',fontFamily:'monospace'}}>
-            {s.created_at ? new Date(s.created_at).toLocaleDateString('pt-BR') : '—'}
-            <div>{s.created_at ? new Date(s.created_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) : ''}</div>
+            {(s.ordered_at || s.created_at) ? new Date(s.ordered_at || s.created_at).toLocaleDateString('pt-BR') : '—'}
+            <div>{(s.ordered_at || s.created_at) ? new Date(s.ordered_at || s.created_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) : ''}</div>
           </div>
 
           {/* Ação */}
